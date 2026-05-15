@@ -108,6 +108,15 @@ SchedNode *schedHead   = NULL;   /* head of the circular schedule list       */
 int        nextID      = 1;      /* auto-increment task ID                   */
 
 /* ============================================================
+ *  FORWARD DECLARATIONS
+ *  These are needed because printTaskRow (defined early, inside
+ *  the table-helper block) calls daysUntilDue and truncate, which
+ *  are defined later in the file.
+ * ============================================================ */
+int  daysUntilDue(const char *dueDate);
+void truncate(char *dst, const char *src, int maxLen);
+
+/* ============================================================
  *  UTILITY FUNCTIONS
  * ============================================================ */
 
@@ -117,46 +126,138 @@ void clearInputBuffer() {
     while ((c = getchar()) != '\n' && c != EOF);
 }
 
-/* Thin box divider used inside sections */
+
+/* Narrow divider — used only for non-table boxes (header, menu, etc.) */
 void printDivider() {
     printf("  +----------------------------------------------------------+\n");
 }
 
-/* Thick divider used between major sections */
+/* Thick divider for the banner */
 void printThickDivider() {
     printf("  ============================================================\n");
 }
 
+/* Wide table rules — computed to exactly match printTaskRow column widths */
+/* Row: '  | ID(4) | Priority(13) | Title(22) | Subject(12) | Type(10) | DueDate(10) | Days(8) | Status(9) |' */
+#define TBL_RULE \
+    "  +------+---------------+------------------------+--------------+------------+------------+----------+-----------+\n"
+
+void printTableTop()    { printf(TBL_RULE); }
+void printTableSep()    { printf(TBL_RULE); }
+void printTableBottom() { printf(TBL_RULE); }
+
 /*
- * printHeader: boxed title for every sub-screen.
+ * printTableHeader: column labels aligned to the same widths as printTaskRow.
+ *   | ID   | Priority      | Title                  | Subject      | Type       | Due Date   | Days Left | Status    |
  */
-void printHeader(const char *title) {
-    printf("\n");
-    printDivider();
-    printf("  |  >> %-52s|\n", title);
-    printDivider();
+void printTableHeader() {
+    printTableTop();
+    printf("  | %-4s | %-13s | %-22s | %-12s | %-10s | %-10s | %-8s | %-9s |\n",
+           "ID", "Priority", "Title", "Subject", "Type", "Due Date", "Days", "Status");
+    printTableSep();
 }
 
 /*
- * printBanner: ASCII art logo shown on the main menu and startup screen.
+ * getPriorityLabel: badge text exactly 13 chars wide (fits the Priority column).
+ */
+const char *getPriorityLabel(int priority) {
+    if (priority == 1) return "[!! URGENT   ]";
+    if (priority == 2) return "[ ! UPCOMING ]";
+    if (priority == 0) return "[    DONE    ]";
+    return  "[    SAFE    ]";
+}
+
+/*
+ * printTaskRow: one data row — columns match printTableHeader exactly.
+ *   | ID   | Priority      | Title                  | Subject      | Type       | Due Date   | Days Left | Status    |
+ */
+void printTaskRow(Task *t) {
+    int  days = daysUntilDue(t->dueDate);
+    char title[23], subject[13], type[11];
+
+    truncate(title,   t->title,   22);
+    truncate(subject, t->subject, 12);
+    truncate(type,    t->type,    10);
+
+    char daysBuf[20];
+    if (t->isDone)
+        snprintf(daysBuf, sizeof(daysBuf), "done");
+    else if (days < 0)
+        snprintf(daysBuf, sizeof(daysBuf), "OVR %dd", -days);
+    else
+        snprintf(daysBuf, sizeof(daysBuf), "%d day(s)", days);
+
+    const char *statusStr = t->isDone ? "DONE     " : "PENDING  ";
+    const char *priLabel  = getPriorityLabel(t->isDone ? 0 : t->priority);
+
+    printf("  | %-4d | %-13s | %-22s | %-12s | %-10s | %-10s | %-8s | %-9s |\n",
+           t->id, priLabel, title, subject, type,
+           t->dueDate, daysBuf, statusStr);
+}
+
+/*
+ * printTaskSummary: footer summary line inside the same wide table border.
+ * Inner width = 111. Fixed prefix = "  Total: XXX   Pending: XXX   Done: XXX" = 39 chars.
+ * Trailing pipe needs 71 spaces of padding: 111 - 39 - 1 = 71.
+ */
+void printTaskSummary(int total, int pending, int done) {
+    printTableBottom();
+    printf("  |  Total: %-3d   Pending: %-3d   Done: %-3d"
+           "                                                                       |\n",
+           total, pending, done);
+    printTableBottom();
+}
+
+/*
+ * printHeader: section title using the same wide rule as the task table,
+ * so the header border always aligns with the table below it.
+ * Inner content = 105 chars between '|  >> ' and '|'.
+ */
+void printHeader(const char *title) {
+    char buf[106];
+    int len = (int)strlen(title);
+    if (len > 105) {
+        strncpy(buf, title, 103);
+        buf[103] = '.'; buf[104] = '.'; buf[105] = '\0';
+    } else {
+        strncpy(buf, title, 105);
+        buf[len] = '\0';
+    }
+    printf("\n");
+    printf(TBL_RULE);
+    printf("  |  >> %-105s|\n", buf);
+    printf(TBL_RULE);
+}
+
+/*
+ * printBanner: Pure ASCII art banner — no Unicode, works on any terminal.
+ * Letters are built using only # and space characters.
+ * Each letter is 5 rows tall with clear distinct shapes.
+ * Every line is exactly 62 characters wide to match printDivider().
  */
 void printBanner() {
     printf("\n");
     printThickDivider();
     printf("  |                                                          |\n");
-    printf("  |   ____  ____    _    ____  _     ___ _   _ _____        |\n");
-    printf("  |  |  _ \\| __ )  / \\  |  _ \\| |   |_ _| \\ | | ____|      |\n");
-    printf("  |  | | | |  _ \\ / _ \\ | | | | |    | ||  \\| |  _|        |\n");
-    printf("  |  | |_| | |_) / ___ \\| |_| | |___ | || |\\  | |___       |\n");
-    printf("  |  |____/|____/_/   \\_\\____/|_____|___|_| \\_|_____|       |\n");
-    printf("  |                  G U A R D                               |\n");
-    printf("  |        Student Schedule & Deadline Tracker System        |\n");
+    printf("  |  ####   #####   ###   ####   #      ###    #   #  #####  |\n");
+    printf("  |  #   #  #      #   #  #   #  #       #     ##  #  #      |\n");
+    printf("  |  #   #  ###    #####  #   #  #       #     # # #  ###    |\n");
+    printf("  |  #   #  #      #   #  #   #  #       #     #  ##  #      |\n");
+    printf("  |  ####   #####  #   #  ####   #####  ###    #   #  #####  |\n");
+    printf("  |                                                          |\n");
+    printf("  |   ####  #   #   ###   ####   ####                        |\n");
+    printf("  |  #      #   #  #   #  #   #  #   #                       |\n");
+    printf("  |  # ###  #   #  #####  ####   #   #                       |\n");
+    printf("  |  #   #  #   #  #   #  # #    #   #                       |\n");
+    printf("  |   ####   ###   #   #  #  ##  ####                        |\n");
+    printf("  |                                                          |\n");
+    printf("  |    Student Schedule & Deadline Tracker System            |\n");
     printf("  |                                                          |\n");
     printThickDivider();
     printf("  |  CC104: Data Structures & Algorithms  |  Final Project  |\n");
-    printf("  |  DSA Used: DLL | Stack | Queue | Circ-DLL | PQ | BST   |\n");
-    printf("  |            Tree | Bubble/Insertion Sort | Bin Search    |\n");
-    printf("  |            Linear Search | Infix-to-Postfix             |\n");
+    printf("  |  DSA: DLL | Stack | Queue | Circ-DLL | PQ | BST | Tree |\n");
+    printf("  |       Bubble Sort | Insertion Sort | Binary Search      |\n");
+    printf("  |       Linear Search | Infix-to-Postfix Conversion       |\n");
     printThickDivider();
 }
 
@@ -198,15 +299,6 @@ int daysUntilDue(const char *dueDate) {
 }
 
 /*
- * getPriorityLabel: returns a text label based on priority integer.
- */
-const char *getPriorityLabel(int priority) {
-    if (priority == 1) return "[ !! URGENT   ]";
-    if (priority == 2) return "[  ! UPCOMING ]";
-    return "[    SAFE     ]";
-}
-
-/*
  * computePriority: determines the priority of a task based on days left.
  */
 int computePriority(const char *dueDate) {
@@ -216,20 +308,29 @@ int computePriority(const char *dueDate) {
     return 3;
 }
 
-/* Print a single task row with clean column alignment */
+/*
+ * truncate: copies src into dst, capping at maxLen chars (adds '\0').
+ * Used so long field values never break column alignment.
+ */
+void truncate(char *dst, const char *src, int maxLen) {
+    int len = (int)strlen(src);
+    if (len <= maxLen) {
+        strncpy(dst, src, maxLen);
+        dst[len] = '\0';
+    } else {
+        strncpy(dst, src, maxLen - 2);
+        dst[maxLen - 2] = '.';
+        dst[maxLen - 1] = '.';
+        dst[maxLen]     = '\0';
+    }
+}
+
+/*
+ * printTask: thin wrapper — calls printTaskRow for backward compatibility.
+ * All callers that used printTask() now get the wide table row.
+ */
 void printTask(Task *t) {
-    int days = daysUntilDue(t->dueDate);
-    printf("  | ID:%-3d %s %-26s | %-11s | %-10s | %s",
-           t->id,
-           getPriorityLabel(t->priority),
-           t->title,
-           t->subject,
-           t->type,
-           t->dueDate);
-    if (days < 0)
-        printf(" (OVERDUE %d day(s))\n", -days);
-    else
-        printf(" (%d day(s) left)\n", days);
+    printTaskRow(t);
 }
 
 /*
@@ -572,20 +673,33 @@ int removeScheduleEntry(const char *dayName, int entryIndex) {
  */
 void displayWeeklySchedule() {
     printHeader("Weekly Class Schedule  [ Circular Doubly Linked List ]");
+
+    /* Columns: Day(9) | #(1) | Subject(44) | Time(46) — total row = 115 chars */
+    #define SCHED_RULE \
+        "  +-----------+---+----------------------------------------------+------------------------------------------------+\n"
+
+    printf(SCHED_RULE);
+    printf("  | %-9s | # | %-44s | %-46s |\n", "Day", "Subject", "Time Slot");
+    printf(SCHED_RULE);
+
     SchedNode *current = schedHead;
     for (int i = 0; i < MAX_DAYS; i++) {
-        printf("  |  %-12s                                             |\n", current->day);
         if (current->entryCount == 0) {
-            printf("  |    -- No class scheduled --                             |\n");
+            printf("  | %-9s |   | %-44s | %-46s |\n",
+                   current->day, "-- No class scheduled --", "");
         } else {
             for (int j = 0; j < current->entryCount; j++) {
-                printf("  |    [%d] %-28s  %s\n",
+                char subjBuf[45], timeBuf[47];
+                truncate(subjBuf, current->entries[j].subject, 44);
+                truncate(timeBuf, current->entries[j].time,    46);
+                printf("  | %-9s | %d | %-44s | %-46s |\n",
+                       j == 0 ? current->day : "",
                        j + 1,
-                       current->entries[j].subject,
-                       current->entries[j].time);
+                       subjBuf,
+                       timeBuf);
             }
         }
-        printDivider();
+        printf(SCHED_RULE);
         current = current->next;
     }
 }
@@ -642,34 +756,53 @@ void pqRebuild() {
  * displayPriorityAlerts: shows tasks due within URGENT_DAYS days.
  */
 void displayPriorityAlerts() {
-    printHeader("Priority Alerts  [ Tasks due within 3 days ]");
+    printHeader("Priority Alerts  [ Tasks Due Within 3 Days ]");
     PQNode *current = pqHead;
     int found = 0;
+
+    /* Count first so we can print header only when needed */
+    PQNode *scan = pqHead;
+    while (scan != NULL) {
+        if (daysUntilDue(scan->data.dueDate) <= URGENT_DAYS) { found = 1; break; }
+        scan = scan->next;
+    }
+
+    if (!found) {
+        printf("  |                                                                                                            |\n");
+        printf("  |   [+] No urgent deadlines right now. Keep it up!                                                          |\n");
+        printf("  |                                                                                                            |\n");
+        printf(TBL_RULE);
+        return;
+    }
+
+    /* Alert table — same total width as the main task table (115 chars) */
+    /* Columns: Urgcy(5) | Title(56) | Subject(29) | Due Date(10) */
+    printf("  +-------+----------------------------------------------------------+-------------------------------+------------+\n");
+    printf("  | %-5s | %-56s | %-29s | %-10s |\n",
+           "Urgcy", "Task Title", "Subject", "Due Date");
+    printf("  +-------+----------------------------------------------------------+-------------------------------+------------+\n");
+
     while (current != NULL) {
         int days = daysUntilDue(current->data.dueDate);
         if (days <= URGENT_DAYS) {
+            char urgBuf[20], titleBuf[57], subjBuf[30];
+            truncate(titleBuf, current->data.title,   56);
+            truncate(subjBuf,  current->data.subject, 29);
+
             if (days < 0)
-                printf("  | [OVERDUE %2d day(s)] %-28s | %-12s | Due: %s\n",
-                       -days,
-                       current->data.title,
-                       current->data.subject,
-                       current->data.dueDate);
+                snprintf(urgBuf, sizeof(urgBuf), "OVR%d", -days);
+            else if (days == 0)
+                snprintf(urgBuf, sizeof(urgBuf), "TODAY!");
             else
-                printf("  | [  %d day(s) left  ] %-28s | %-12s | Due: %s\n",
-                       days,
-                       current->data.title,
-                       current->data.subject,
-                       current->data.dueDate);
-            found = 1;
+                snprintf(urgBuf, sizeof(urgBuf), "%2dday%s", days, days == 1 ? " " : "s");
+
+            printf("  | %-5s | %-56s | %-29s | %-10s |\n",
+                   urgBuf, titleBuf, subjBuf, current->data.dueDate);
         }
         current = current->next;
     }
-    if (!found) {
-        printf("  |                                                          |\n");
-        printf("  |   [+] No urgent deadlines right now. Keep it up!        |\n");
-        printf("  |                                                          |\n");
-    }
-    printDivider();
+    printf("  +-------+----------------------------------------------------------+-------------------------------+------------+\n");
+    printf(TBL_RULE);
 }
 
 /* ============================================================
@@ -1130,12 +1263,21 @@ void addTask() {
     printf("\n");
     printDivider();
     printf("  |  [+] Task successfully added!                           |\n");
-    printf("  |      ID       : %-40d|\n", t.id);
-    printf("  |      Title    : %-40s|\n", t.title);
-    printf("  |      Subject  : %-40s|\n", t.subject);
-    printf("  |      Type     : %-40s|\n", t.type);
-    printf("  |      Due Date : %-40s|\n", t.dueDate);
-    printf("  |      Priority : %-40s|\n", getPriorityLabel(t.priority));
+    printDivider();
+
+    char tTitle[43], tSubj[43], tType[43], tDue[43], tPri[43];
+    truncate(tTitle, t.title,              42);
+    truncate(tSubj,  t.subject,            42);
+    truncate(tType,  t.type,               42);
+    truncate(tDue,   t.dueDate,            42);
+    truncate(tPri,   getPriorityLabel(t.priority), 42);
+
+    printf("  |  ID       : %-42d|\n", t.id);
+    printf("  |  Title    : %-42s|\n", tTitle);
+    printf("  |  Subject  : %-42s|\n", tSubj);
+    printf("  |  Type     : %-42s|\n", tType);
+    printf("  |  Due Date : %-42s|\n", tDue);
+    printf("  |  Priority : %-42s|\n", tPri);
     printDivider();
 }
 
@@ -1155,15 +1297,22 @@ void viewAllTasksSorted() {
     int  n = copyDLLToArray(taskHead, arr, 500);
     bubbleSortByDate(arr, n);
 
-    printHeader("All Tasks  [ Sorted by Due Date via Bubble Sort ]");
-    printf("  |  %-6s | %-16s | %-26s | %-11s | %-10s |\n",
-           "ID", "Priority", "Title", "Subject", "Due Date");
-    printDivider();
+    /* Count stats */
+    int pending = 0, done = 0;
     for (int i = 0; i < n; i++) {
-        printf("  | [%s] ", arr[i].isDone ? "DONE   " : "PENDING");
-        printTask(&arr[i]);
+        if (arr[i].isDone) done++;
+        else               pending++;
     }
-    printDivider();
+
+    printHeader("All Tasks  [ Sorted by Due Date  |  Bubble Sort ]");
+    printTableHeader();
+
+    for (int i = 0; i < n; i++) {
+        printTaskRow(&arr[i]);
+        if (i < n - 1) printTableSep();
+    }
+
+    printTaskSummary(n, pending, done);
     printf("\n");
     displayPriorityAlerts();
 }
@@ -1315,15 +1464,10 @@ void markTaskDone() {
 
     int pendingCount = 0;
     DLLNode *current = taskHead;
-    printf("  |  Pending Tasks:                                          |\n");
-    printDivider();
-    while (current != NULL) {
-        if (!current->data.isDone) {
-            printTask(&current->data);
-            pendingCount++;
-        }
-        current = current->next;
-    }
+
+    /* Count pending first to decide whether to print header */
+    DLLNode *scan = taskHead;
+    while (scan != NULL) { if (!scan->data.isDone) pendingCount++; scan = scan->next; }
 
     if (pendingCount == 0) {
         printf("  |  [!] No pending tasks to mark as done.                  |\n");
@@ -1331,7 +1475,20 @@ void markTaskDone() {
         return;
     }
 
-    printDivider();
+    printf("  |  Pending Tasks:                                          |\n");
+    printTableHeader();
+    current = taskHead;
+    int first = 1;
+    while (current != NULL) {
+        if (!current->data.isDone) {
+            if (!first) printTableSep();
+            printTaskRow(&current->data);
+            first = 0;
+        }
+        current = current->next;
+    }
+    printTableBottom();
+
     printf("  Enter Task ID to mark done (0 to cancel) : ");
 
     int id;
@@ -1453,18 +1610,20 @@ void searchTask() {
             char keyword[MAX_TITLE_LEN];
             fgets(keyword, MAX_TITLE_LEN, stdin);
             keyword[strcspn(keyword, "\n")] = '\0';
-            printHeader("Search Results  [ Linear Search ]");
+            printHeader("Search Results  [ Linear Search by Title ]");
+            printTableHeader();
             linearSearchByTitle(taskHead, keyword);
-            printDivider();
+            printTableBottom();
         }
         else if (choice == 2) {
             printf("  Subject keyword : ");
             char keyword[MAX_SUBJECT_LEN];
             fgets(keyword, MAX_SUBJECT_LEN, stdin);
             keyword[strcspn(keyword, "\n")] = '\0';
-            printHeader("Search Results  [ BST In-Order Search ]");
+            printHeader("Search Results  [ BST In-Order Search by Subject ]");
+            printTableHeader();
             bstSearchBySubject(bstRoot, keyword);
-            printDivider();
+            printTableBottom();
         }
         else if (choice == 3) {
             printf("  Due date to search (YYYY-MM-DD) : ");
@@ -1476,18 +1635,23 @@ void searchTask() {
             int  n = copyDLLToArray(taskHead, arr, 500);
             bubbleSortByDate(arr, n);
 
-            printHeader("Search Results  [ Binary Search by Date ]");
+            printHeader("Search Results  [ Binary Search by Due Date ]");
             int idx = binarySearchByDate(arr, n, keyword);
             if (idx == -1) {
                 printf("  [-] No task found with due date: %s\n", keyword);
             } else {
+                printTableHeader();
                 int start = idx;
                 while (start > 0 && strcmp(arr[start-1].dueDate, keyword) == 0)
                     start--;
-                for (int i = start; i < n && strcmp(arr[i].dueDate, keyword) == 0; i++)
-                    printTask(&arr[i]);
+                int first = 1;
+                for (int i = start; i < n && strcmp(arr[i].dueDate, keyword) == 0; i++) {
+                    if (!first) printTableSep();
+                    printTaskRow(&arr[i]);
+                    first = 0;
+                }
+                printTableBottom();
             }
-            printDivider();
         }
         else {
             printf("  [-] Invalid choice. Please enter 0, 1, 2, or 3.\n");
@@ -1508,18 +1672,20 @@ void viewPendingQueue() {
         return;
     }
 
-    printf("  |  %-4s | %-26s | %-11s | %-10s | %s\n",
-           "Pos", "Title", "Subject", "Type", "Due Date");
-    printDivider();
+    printTableHeader();
     QueueNode *current = pendingQ.front;
     int pos = 1;
+    int total = 0;
     while (current != NULL) {
-        printf("  | [%2d] ", pos++);
-        printTask(&current->data);
+        printTaskRow(&current->data);
+        if (current->next != NULL) printTableSep();
         current = current->next;
+        pos++;
+        total++;
     }
-    printDivider();
-    printf("  |  Total pending: %-41d|\n", pendingQ.size);
+    printTableBottom();
+    printf("  |  Queue size: %-3d  (FIFO — first added is first submitted)"
+           "                        |\n", pendingQ.size);
     printDivider();
 }
 
@@ -1638,19 +1804,12 @@ void gradeCalculator() {
         return;
     }
 
+    /* Convert infix to postfix, then evaluate */
     char postfix[MAX_EXPR_LEN * 2];
     infixToPostfix(infix, postfix);
-
-    printf("\n");
-    printDivider();
-    printf("  |  Infix    : %-44s|\n", infix);
-    printf("  |  Postfix  : %-44s|\n", postfix);
-    printDivider();
-
     float result = evaluatePostfix(postfix);
-    printf("  |  Result   : %-6.2f                                        |\n", result);
 
-    /* Grade equivalent using CBSUA-style grading scale */
+    /* Determine grade equivalent using CBSUA grading scale */
     const char *equiv = "";
     if      (result >= 97) equiv = "1.00  -- Excellent!";
     else if (result >= 94) equiv = "1.25";
@@ -1663,7 +1822,19 @@ void gradeCalculator() {
     else if (result >= 75) equiv = "3.00  -- Passing";
     else                   equiv = "5.00  -- Below Passing";
 
-    printf("  |  Grade    : %-44s|\n", equiv);
+    /* Truncate for display so box borders never break */
+    char infixBuf[47], postfixBuf[47], equivBuf[47];
+    truncate(infixBuf,   infix,   46);
+    truncate(postfixBuf, postfix, 46);
+    truncate(equivBuf,   equiv,   46);
+
+    printf("\n");
+    printDivider();
+    printf("  |  Infix    : %-44s|\n", infixBuf);
+    printf("  |  Postfix  : %-44s|\n", postfixBuf);
+    printDivider();
+    printf("  |  Result   : %-6.2f                                        |\n", result);
+    printf("  |  Grade    : %-44s|\n", equivBuf);
     printDivider();
 }
 
@@ -1682,10 +1853,19 @@ void sortAndDisplayBySubject() {
     int  n = copyDLLToArray(taskHead, arr, 500);
     insertionSortBySubject(arr, n);
 
+    int pending = 0, done = 0;
+    for (int i = 0; i < n; i++) {
+        if (arr[i].isDone) done++;
+        else               pending++;
+    }
+
     printHeader("Tasks Sorted by Subject  [ Insertion Sort ]");
-    for (int i = 0; i < n; i++)
-        printTask(&arr[i]);
-    printDivider();
+    printTableHeader();
+    for (int i = 0; i < n; i++) {
+        printTaskRow(&arr[i]);
+        if (i < n - 1) printTableSep();
+    }
+    printTaskSummary(n, pending, done);
 }
 
 /*
@@ -1702,15 +1882,16 @@ void deleteTask() {
         return;
     }
 
-    printf("  |  %-8s | Task Details                                  |\n", "Status");
-    printDivider();
+    printTableHeader();
     DLLNode *current = taskHead;
+    int first = 1;
     while (current != NULL) {
-        printf("  | [%-7s] ", current->data.isDone ? "DONE" : "PENDING");
-        printTask(&current->data);
+        if (!first) printTableSep();
+        printTaskRow(&current->data);
+        first = 0;
         current = current->next;
     }
-    printDivider();
+    printTableBottom();
     printf("  Enter Task ID to delete (0 to cancel) : ");
 
     int id;
